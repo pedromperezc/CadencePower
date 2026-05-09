@@ -22,6 +22,7 @@
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
 
     <application
+        android:name=".App"
         android:allowBackup="false"
         android:label="CadencePower"
         android:icon="@android:drawable/ic_menu_compass"

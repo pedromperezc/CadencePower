@@ -8,15 +8,15 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -36,7 +36,6 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 
 class MainActivity : ComponentActivity() {
-    private val vm: MainViewModel by viewModels()
 
     private val permLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -45,18 +44,26 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         requestNeededPermissions()
+
+        val appCtx = application as App
+
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     AppScreen(
-                        vm = vm,
+                        app = appCtx,
                         onStart = {
-                            startService(Intent(this, BridgeService::class.java))
-                            vm.start()
+                            val i = Intent(this, BridgeService::class.java)
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                startForegroundService(i)
+                            } else {
+                                startService(i)
+                            }
                         },
                         onStop = {
-                            vm.stop()
-                            stopService(Intent(this, BridgeService::class.java))
+                            val i = Intent(this, BridgeService::class.java)
+                                .setAction(BridgeService.ACTION_STOP)
+                            startService(i)
                         }
                     )
                 }
@@ -84,65 +91,40 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun AppScreen(vm: MainViewModel, onStart: () -> Unit, onStop: () -> Unit) {
-    val cadence by vm.cadenceScanner.cadenceRpm.collectAsState()
-    val power by vm.power.collectAsState()
-    val speed by vm.speedKmh.collectAsState()
-    val running by vm.running.collectAsState()
-    val subs by vm.subscribers.collectAsState()
-    val gear by vm.gearFactor.collectAsState()
-    val sensorState by vm.cadenceScanner.state.collectAsState()
-    val sensorName by vm.cadenceScanner.deviceName.collectAsState()
-    val advertising by vm.powerAdvertiser.advertising.collectAsState()
-    val advError by vm.powerAdvertiser.lastError.collectAsState()
+private fun AppScreen(app: App, onStart: () -> Unit, onStop: () -> Unit) {
+    val cadence by app.cadenceScanner.cadenceRpm.collectAsState()
+    val power by app.power.collectAsState()
+    val speed by app.speedKmh.collectAsState()
+    val running by app.running.collectAsState()
+    val subs by app.subscribers.collectAsState()
+    val gear by app.gearFactor.collectAsState()
+    val sensorState by app.cadenceScanner.state.collectAsState()
+    val sensorName by app.cadenceScanner.deviceName.collectAsState()
+    val advertising by app.powerAdvertiser.advertising.collectAsState()
+    val advError by app.powerAdvertiser.lastError.collectAsState()
+
+    val scroll = rememberScrollState()
 
     Column(
-        modifier = Modifier.fillMaxSize().padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(scroll)
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text("CadencePower", fontSize = 28.sp, fontWeight = FontWeight.Bold)
-        Text("Cadence \u2192 Virtual Power for Zwift", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("CadencePower", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+        Text(
+            "Cadence \u2192 Virtual Power for Zwift / MyWhoosh",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
 
-        BigCard("Power", "${power} W")
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            BigCard("Cadence", "${cadence.toInt()} rpm", modifier = Modifier.weight(1f))
-            BigCard("Speed", "%.1f km/h".format(speed), modifier = Modifier.weight(1f))
-        }
-
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Virtual gear: %.1f m / crank rev".format(gear))
-                Slider(
-                    value = gear.toFloat(),
-                    valueRange = 2f..12f,
-                    onValueChange = { vm.setGear(it.toDouble()) }
-                )
-                Text(
-                    "Lower = easier (less power per rpm). 6.0 m/rev \u2248 a typical road bike in mid gear.",
-                    fontSize = 12.sp
-                )
-            }
-        }
-
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("CSC sensor: ${sensorName ?: "(none)"} \u2014 $sensorState")
-                Text("Advertising power meter: " + when {
-                    advertising -> "YES"
-                    advError != null -> "NO (error $advError)"
-                    !running -> "stopped"
-                    else -> "starting\u2026"
-                })
-                Text("Zwift clients connected: $subs")
-            }
-        }
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        // Big, color-coded Start / Stop toggle
+        // Big START / STOP button at the top so it's always visible.
         Button(
             onClick = { if (running) onStop() else onStart() },
-            modifier = Modifier.fillMaxWidth().height(72.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(64.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = if (running) Color(0xFFB00020) else Color(0xFF1B873B),
                 contentColor = Color.White
@@ -150,9 +132,58 @@ private fun AppScreen(vm: MainViewModel, onStart: () -> Unit, onStop: () -> Unit
         ) {
             Text(
                 if (running) "STOP" else "START",
-                fontSize = 22.sp,
+                fontSize = 20.sp,
                 fontWeight = FontWeight.Bold
             )
+        }
+
+        BigCard("Power", "$power W")
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            BigCard("Cadence", "${cadence.toInt()} rpm", modifier = Modifier.weight(1f))
+            BigCard("Speed", "%.1f km/h".format(speed), modifier = Modifier.weight(1f))
+        }
+
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(
+                    "Virtual gear: %.1f m / crank rev".format(gear),
+                    fontSize = 14.sp
+                )
+                Slider(
+                    value = gear.toFloat(),
+                    valueRange = 2f..12f,
+                    onValueChange = { app.setGear(it.toDouble()) }
+                )
+                Text(
+                    "Lower = easier (less power per rpm). 6.0 \u2248 road bike mid gear.",
+                    fontSize = 11.sp
+                )
+            }
+        }
+
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                Text("CSC sensor: ${sensorName ?: "(none)"} \u2014 $sensorState", fontSize = 13.sp)
+                Text(
+                    "Advertising: " + when {
+                        advertising -> "YES"
+                        advError != null -> "NO (error $advError)"
+                        !running -> "stopped"
+                        else -> "starting\u2026"
+                    },
+                    fontSize = 13.sp
+                )
+                Text("Connected clients: $subs", fontSize = 13.sp)
+            }
         }
     }
 }
@@ -161,11 +192,11 @@ private fun AppScreen(vm: MainViewModel, onStart: () -> Unit, onStop: () -> Unit
 private fun BigCard(label: String, value: String, modifier: Modifier = Modifier) {
     Card(modifier = modifier.fillMaxWidth()) {
         Column(
-            modifier = Modifier.padding(16.dp),
+            modifier = Modifier.padding(12.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text(label, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(value, fontSize = 32.sp, fontWeight = FontWeight.Bold)
+            Text(label, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(value, fontSize = 28.sp, fontWeight = FontWeight.Bold)
         }
     }
 }
