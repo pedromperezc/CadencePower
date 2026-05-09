@@ -16,6 +16,8 @@ import android.bluetooth.le.AdvertiseSettings
 import android.content.Context
 import android.os.ParcelUuid
 import android.util.Log
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.CopyOnWriteArrayList
@@ -39,6 +41,13 @@ class PowerAdvertiser(private val context: Context) {
     private val subscribers = CopyOnWriteArrayList<BluetoothDevice>()
 
     var onClientCountChanged: ((Int) -> Unit)? = null
+
+    private val _advertising = MutableStateFlow(false)
+    val advertising: StateFlow<Boolean> = _advertising
+
+    /** Last advertise error code (see AdvertiseCallback constants). null = no error. */
+    private val _lastError = MutableStateFlow<Int?>(null)
+    val lastError: StateFlow<Int?> = _lastError
 
     fun isPeripheralSupported(): Boolean =
         adapter?.isMultipleAdvertisementSupported == true
@@ -88,19 +97,28 @@ class PowerAdvertiser(private val context: Context) {
 
         gattServer?.addService(service)
 
-        // 2) Advertise
+        // 2) Advertise — split between primary packet and scan response to fit
+        //    the 31-byte BLE limit even when the phone has a long Bluetooth name.
         val settings = AdvertiseSettings.Builder()
             .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
             .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
             .setConnectable(true)
             .build()
 
+        // Primary packet: just flags + the 16-bit Cycling Power service UUID.
         val data = AdvertiseData.Builder()
-            .setIncludeDeviceName(true)
+            .setIncludeDeviceName(false)
+            .setIncludeTxPowerLevel(false)
             .addServiceUuid(ParcelUuid(BleUuids.CYCLING_POWER_SERVICE))
             .build()
 
-        advertiser.startAdvertising(settings, data, advertiseCallback)
+        // Scan response: device name. Zwift will use this to label the meter.
+        val scanResponse = AdvertiseData.Builder()
+            .setIncludeDeviceName(true)
+            .build()
+
+        _lastError.value = null
+        advertiser.startAdvertising(settings, data, scanResponse, advertiseCallback)
         Log.i(TAG, "Advertising Cycling Power Service")
         return true
     }
@@ -110,6 +128,7 @@ class PowerAdvertiser(private val context: Context) {
         gattServer?.close()
         gattServer = null
         subscribers.clear()
+        _advertising.value = false
         onClientCountChanged?.invoke(0)
     }
 
@@ -131,11 +150,24 @@ class PowerAdvertiser(private val context: Context) {
 
     private val advertiseCallback = object : AdvertiseCallback() {
         override fun onStartFailure(errorCode: Int) {
-            Log.e(TAG, "Advertise failed: $errorCode")
+            Log.e(TAG, "Advertise failed: $errorCode (${errorName(errorCode)})")
+            _advertising.value = false
+            _lastError.value = errorCode
         }
         override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) {
             Log.i(TAG, "Advertise started")
+            _advertising.value = true
+            _lastError.value = null
         }
+    }
+
+    private fun errorName(code: Int): String = when (code) {
+        AdvertiseCallback.ADVERTISE_FAILED_DATA_TOO_LARGE -> "DATA_TOO_LARGE"
+        AdvertiseCallback.ADVERTISE_FAILED_TOO_MANY_ADVERTISERS -> "TOO_MANY_ADVERTISERS"
+        AdvertiseCallback.ADVERTISE_FAILED_ALREADY_STARTED -> "ALREADY_STARTED"
+        AdvertiseCallback.ADVERTISE_FAILED_INTERNAL_ERROR -> "INTERNAL_ERROR"
+        AdvertiseCallback.ADVERTISE_FAILED_FEATURE_UNSUPPORTED -> "FEATURE_UNSUPPORTED"
+        else -> "UNKNOWN"
     }
 
     private val gattServerCallback = object : BluetoothGattServerCallback() {

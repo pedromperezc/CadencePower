@@ -49,7 +49,13 @@ class CadenceScanner(private val context: Context) {
     // Last sample for delta computation
     private var lastCrankRevs: Int = -1
     private var lastCrankEventTime1024: Int = -1
-    private var lastNotifyMillis: Long = 0L
+
+    /** Wall-clock millis when we last saw new crank revolutions. 0 = never. */
+    @Volatile var lastCrankActivityMillis: Long = 0L
+        private set
+
+    /** Force the published cadence to 0 (called by the watchdog). */
+    fun forceZeroCadence() { _cadenceRpm.value = 0.0 }
 
     fun start() {
         if (_state.value == State.SCANNING || _state.value == State.CONNECTED) return
@@ -148,15 +154,14 @@ class CadenceScanner(private val context: Context) {
             val dRevs = (crankRevs - lastCrankRevs + 0x10000) and 0xFFFF
             val dTime1024 = (crankEvt - lastCrankEventTime1024 + 0x10000) and 0xFFFF
 
-            if (dTime1024 > 0 && dRevs > 0) {
+            if (dRevs > 0 && dTime1024 > 0) {
                 val dtSeconds = dTime1024 / 1024.0
                 val rpm = dRevs / dtSeconds * 60.0
                 _cadenceRpm.value = rpm
-                lastNotifyMillis = System.currentTimeMillis()
-            } else if (System.currentTimeMillis() - lastNotifyMillis > 3000) {
-                // No new revs in 3s -> rider stopped
-                _cadenceRpm.value = 0.0
+                lastCrankActivityMillis = System.currentTimeMillis()
             }
+            // If dRevs == 0 we don't change anything here; the watchdog in
+            // MainViewModel will zero out the cadence after a timeout.
         }
         lastCrankRevs = crankRevs
         lastCrankEventTime1024 = crankEvt

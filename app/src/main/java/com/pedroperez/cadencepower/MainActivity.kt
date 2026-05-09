@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
@@ -28,6 +29,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -91,6 +93,8 @@ private fun AppScreen(vm: MainViewModel, onStart: () -> Unit, onStop: () -> Unit
     val gear by vm.gearFactor.collectAsState()
     val sensorState by vm.cadenceScanner.state.collectAsState()
     val sensorName by vm.cadenceScanner.deviceName.collectAsState()
+    val advertising by vm.powerAdvertiser.advertising.collectAsState()
+    val advError by vm.powerAdvertiser.lastError.collectAsState()
 
     Column(
         modifier = Modifier.fillMaxSize().padding(20.dp),
@@ -123,15 +127,33 @@ private fun AppScreen(vm: MainViewModel, onStart: () -> Unit, onStop: () -> Unit
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("CSC sensor: ${sensorName ?: "(none)"} \u2014 $sensorState")
+                Text("Advertising power meter: " + when {
+                    advertising -> "YES"
+                    advError != null -> "NO (error $advError)"
+                    !running -> "stopped"
+                    else -> "starting\u2026"
+                })
                 Text("Zwift clients connected: $subs")
             }
         }
 
         Spacer(modifier = Modifier.height(8.dp))
+
+        // Big, color-coded Start / Stop toggle
         Button(
             onClick = { if (running) onStop() else onStart() },
-            modifier = Modifier.fillMaxWidth().height(56.dp)
-        ) { Text(if (running) "Stop" else "Start", fontSize = 18.sp) }
+            modifier = Modifier.fillMaxWidth().height(72.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = if (running) Color(0xFFB00020) else Color(0xFF1B873B),
+                contentColor = Color.White
+            )
+        ) {
+            Text(
+                if (running) "STOP" else "START",
+                fontSize = 22.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
     }
 }
 

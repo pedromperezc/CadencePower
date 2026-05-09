@@ -52,6 +52,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
         publishJob = viewModelScope.launch {
             while (_running.value) {
+                // Watchdog: if we haven't seen a crank revolution in >2s, force 0.
+                val now = System.currentTimeMillis()
+                val lastActivity = cadenceScanner.lastCrankActivityMillis
+                if (lastActivity == 0L || now - lastActivity > 2000) {
+                    cadenceScanner.forceZeroCadence()
+                }
+
                 val rpm = cadenceScanner.cadenceRpm.value
                 val watts = estimator.powerFromCadence(rpm)
                 _power.value = watts
