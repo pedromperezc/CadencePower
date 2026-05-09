@@ -97,25 +97,32 @@ class PowerAdvertiser(private val context: Context) {
 
         gattServer?.addService(service)
 
-        // 2) Advertise — split between primary packet and scan response to fit
-        //    the 31-byte BLE limit even when the phone has a long Bluetooth name.
+        // Force a short Bluetooth name so the full advertise packet fits in 31
+        // bytes WITH the device name in the primary packet (some scanners,
+        // including Windows BLE Explorer in passive mode, never request the
+        // scan response, so the name must be in the main payload).
+        try {
+            if (adapter?.name != ADV_NAME) adapter?.name = ADV_NAME
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not set adapter name: ${e.message}")
+        }
+
         val settings = AdvertiseSettings.Builder()
             .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
             .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
             .setConnectable(true)
             .build()
 
-        // Primary packet: just flags + the 16-bit Cycling Power service UUID.
+        // Primary packet: flags (3B) + 16-bit Cycling Power UUID (4B) +
+        // name "CadencePower" (14B) = 21B, fits in 31B.
         val data = AdvertiseData.Builder()
-            .setIncludeDeviceName(false)
+            .setIncludeDeviceName(true)
             .setIncludeTxPowerLevel(false)
             .addServiceUuid(ParcelUuid(BleUuids.CYCLING_POWER_SERVICE))
             .build()
 
-        // Scan response: device name. Zwift will use this to label the meter.
-        val scanResponse = AdvertiseData.Builder()
-            .setIncludeDeviceName(true)
-            .build()
+        // Scan response: empty (everything is in the primary packet).
+        val scanResponse = AdvertiseData.Builder().build()
 
         _lastError.value = null
         advertiser.startAdvertising(settings, data, scanResponse, advertiseCallback)
@@ -223,5 +230,8 @@ class PowerAdvertiser(private val context: Context) {
 
     fun subscriberCount(): Int = subscribers.size
 
-    companion object { private const val TAG = "PowerAdvertiser" }
+    companion object {
+        private const val TAG = "PowerAdvertiser"
+        private const val ADV_NAME = "CadencePower"
+    }
 }
